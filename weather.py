@@ -8,6 +8,7 @@ import numpy as np
 import random
 import webbrowser  
 
+
 # OpenWeatherMap API Key
 API_KEY = "your_openweathermap_api_key_here"
 
@@ -15,8 +16,23 @@ class WeatherApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Weather, Health & Mood Station")
-        self.root.geometry("1100x1000")
-        self.root.configure(bg="white")
+        self.root.geometry("1180x980")
+        self.root.minsize(900, 760)
+        self.root.configure(bg="#08111f")
+        self.colors = {
+            "bg": "#08111f",
+            "panel": "#101d30",
+            "panel_soft": "#14263d",
+            "text": "#f4f8ff",
+            "muted": "#91a4bc",
+            "cyan": "#54d6ff",
+            "blue": "#3578ff",
+            "green": "#62e6b5",
+        }
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Weather.TCombobox", fieldbackground="#14263d", background="#14263d",
+                        foreground="#f4f8ff", bordercolor="#29425f", arrowcolor="#54d6ff")
         
         # Data storage
         self.current_city_data = None 
@@ -25,37 +41,80 @@ class WeatherApp:
         self.graph_times = []
         self.current_playlist_url = "https://open.spotify.com/"
 
+        self.scroll_canvas = tk.Canvas(root, bg=self.colors["bg"], highlightthickness=0)
+        self.scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.scrollbar = ttk.Scrollbar(root, orient="vertical", command=self.scroll_canvas.yview)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.scroll_canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.content_frame = tk.Frame(self.scroll_canvas, bg=self.colors["bg"])
+        self.content_window = self.scroll_canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
+        self.content_frame.bind("<Configure>", self._update_scroll_region)
+        self.scroll_canvas.bind("<Configure>", self._resize_scroll_content)
+        self.scroll_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
         # --- 1. TOP BAR ---
-        self.top_frame = tk.Frame(root, pady=15, bg="white")
-        self.top_frame.pack(fill="x")
+        self.top_frame = tk.Frame(self.content_frame, pady=15, bg=self.colors["bg"])
+        self.top_frame.pack(fill="x", padx=34)
+
+        self.hero_canvas = tk.Canvas(self.top_frame, height=150, highlightthickness=0,
+                                     bg=self.colors["bg"])
+        self.hero_canvas.pack(fill="x", pady=(0, 12))
+        self.hero_canvas.create_text(24, 38, anchor="w", text="ATMOSPHERE",
+                                     font=("Segoe UI", 11, "bold"), fill=self.colors["cyan"])
+        self.hero_canvas.create_text(24, 78, anchor="w", text="Weather, health & mood",
+                                     font=("Segoe UI", 30, "bold"), fill=self.colors["text"])
+        self.hero_canvas.create_text(26, 113, anchor="w", text="A calmer way to read the sky.",
+                                     font=("Segoe UI", 12), fill=self.colors["muted"])
+        self.hero_particles = []
+        for _ in range(18):
+            x = random.randint(500, 1100)
+            y = random.randint(18, 138)
+            size = random.randint(2, 5)
+            self.hero_particles.append([self.hero_canvas.create_oval(x, y, x + size, y + size,
+                                                                       fill=self.colors["cyan"], outline=""),
+                                        random.choice((-1, 1))])
+        self._animate_hero()
+
+        self.search_hint = tk.Label(self.top_frame, text="SEARCH A CITY", font=("Segoe UI", 9, "bold"),
+                                    bg=self.colors["bg"], fg=self.colors["muted"])
+        self.search_hint.pack(anchor="w", padx=4)
         
-        self.city_entry = tk.Entry(self.top_frame, font=("Segoe UI", 14), width=20, bd=2, relief="groove")
-        self.city_entry.pack(side=tk.LEFT, padx=(50, 10))
+        self.city_entry = tk.Entry(self.top_frame, font=("Segoe UI", 14), width=24, bd=0,
+                       relief="flat", bg="#14263d", fg=self.colors["text"],
+                       insertbackground=self.colors["cyan"])
+        self.city_entry.pack(side=tk.LEFT, padx=(4, 10), ipady=9)
         self.city_entry.bind('<Return>', lambda event: self.fetch_weather_by_city()) 
         
         self.search_btn = tk.Button(self.top_frame, text="🔍 Search", command=self.fetch_weather_by_city, 
-                                    font=("Segoe UI", 11, "bold"), bg="#2196F3", fg="white", padx=10, relief="flat")
+                                    font=("Segoe UI", 11, "bold"), bg=self.colors["blue"], fg="white",
+                                    padx=14, pady=8, relief="flat", cursor="hand2")
         self.search_btn.pack(side=tk.LEFT, padx=5)
+        self._add_hover(self.search_btn, self.colors["blue"], "#5b93ff")
 
         self.loc_btn = tk.Button(self.top_frame, text="📍 My Location", command=self.fetch_weather_by_location, 
-                                 font=("Segoe UI", 11, "bold"), bg="#4CAF50", fg="white", padx=10, relief="flat")
+                                 font=("Segoe UI", 11, "bold"), bg="#1eaa82", fg="white",
+                                 padx=14, pady=8, relief="flat", cursor="hand2")
         self.loc_btn.pack(side=tk.LEFT, padx=5)
+        self._add_hover(self.loc_btn, "#1eaa82", "#39c99e")
+        self.status_label = tk.Label(self.top_frame, text="● READY", font=("Segoe UI", 9, "bold"),
+                                     bg=self.colors["bg"], fg=self.colors["green"])
+        self.status_label.pack(side=tk.RIGHT, padx=8)
 
         # --- 2. MAIN DISPLAY ---
-        self.info_frame = tk.Frame(root, pady=5, bg="white")
-        self.info_frame.pack()
+        self.info_frame = tk.Frame(self.content_frame, pady=5, bg=self.colors["bg"])
+        self.info_frame.pack(fill="x")
         
-        self.temp_label = tk.Label(self.info_frame, text="--°C", font=("Segoe UI", 60, "bold"), bg="white", fg="#333")
+        self.temp_label = tk.Label(self.info_frame, text="--°C", font=("Segoe UI", 60, "bold"), bg=self.colors["bg"], fg=self.colors["text"])
         self.temp_label.pack()
         
-        self.feels_like_label = tk.Label(self.info_frame, text="Feels like --°C", font=("Segoe UI", 14), bg="white", fg="#666")
+        self.feels_like_label = tk.Label(self.info_frame, text="Feels like --°C", font=("Segoe UI", 14), bg=self.colors["bg"], fg=self.colors["muted"])
         self.feels_like_label.pack(pady=(0, 10))
         
-        self.desc_label = tk.Label(self.info_frame, text="Ready to scan", font=("Segoe UI", 16), bg="white", fg="#444")
+        self.desc_label = tk.Label(self.info_frame, text="Ready to scan", font=("Segoe UI", 16), bg=self.colors["bg"], fg=self.colors["cyan"])
         self.desc_label.pack()
 
         # --- 3. SMART ADVICE BOX (Outfit & Health) ---
-        self.suggestion_frame = tk.Frame(root, bg="#E3F2FD", pady=15, padx=20, highlightbackground="#2196F3", highlightthickness=1)
+        self.suggestion_frame = tk.Frame(self.content_frame, bg="#E3F2FD", pady=15, padx=20, highlightbackground="#2196F3", highlightthickness=1)
         self.suggestion_frame.pack(fill="x", padx=40, pady=10)
         
         self.outfit_label = tk.Label(self.suggestion_frame, text="👕 OUTFIT: Waiting for data...", 
@@ -67,7 +126,7 @@ class WeatherApp:
         self.health_label.pack(anchor="w", pady=(5,0))
 
         # --- 3.5 MUSIC MATCHING STATION (NEW ADDITION) ---
-        self.music_frame = tk.Frame(root, bg="#1DB954", pady=10, padx=20) # Spotify Green background
+        self.music_frame = tk.Frame(self.content_frame, bg="#1DB954", pady=10, padx=20) # Spotify Green background
         self.music_frame.pack(fill="x", padx=40, pady=(0, 10))
 
         # Left side: Text info
@@ -87,7 +146,7 @@ class WeatherApp:
 
 
         # --- 4. DETAILS GRID (3 Rows) ---
-        self.details_frame = tk.Frame(root, bg="#F9F9F9", pady=15)
+        self.details_frame = tk.Frame(self.content_frame, bg="#F9F9F9", pady=15)
         self.details_frame.pack(fill="x", padx=40, pady=5)
 
         def create_detail_box(parent, label, default_val, row, col):
@@ -118,17 +177,17 @@ class WeatherApp:
         self.lbl_pm10 = create_detail_box(self.details_frame, "🌫️ PM10", "--", 2, 3)
 
         # --- 5. GRAPH AREA ---
-        self.options_frame = tk.Frame(root, bg="white", pady=5)
+        self.options_frame = tk.Frame(self.content_frame, bg=self.colors["bg"], pady=5)
         self.options_frame.pack(fill="x", padx=40)
         
         self.view_mode = tk.StringVar()
-        self.view_combo = ttk.Combobox(self.options_frame, textvariable=self.view_mode, font=("Segoe UI", 11), state="readonly", width=22)
+        self.view_combo = ttk.Combobox(self.options_frame, textvariable=self.view_mode, font=("Segoe UI", 11), state="readonly", width=22, style="Weather.TCombobox")
         self.view_combo['values'] = ("Next 24 Hours", "Next 5 Days", "Previous 24 Hours (Sim)", "Last Month Avg (Sim)")
         self.view_combo.current(0)
         self.view_combo.pack(side=tk.RIGHT, padx=10)
-        tk.Label(self.options_frame, text="Graph View:", font=("Segoe UI", 11, "bold"), bg="white").pack(side=tk.RIGHT)
+        tk.Label(self.options_frame, text="GRAPH VIEW", font=("Segoe UI", 10, "bold"), bg=self.colors["bg"], fg=self.colors["muted"]).pack(side=tk.RIGHT)
 
-        self.graph_frame = tk.Frame(root, bg="white")
+        self.graph_frame = tk.Frame(self.content_frame, bg=self.colors["bg"])
         self.graph_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=5)
         
         self.fig, self.ax = plt.subplots(figsize=(8, 3.0), dpi=100)
@@ -139,6 +198,37 @@ class WeatherApp:
         self.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self.canvas.mpl_connect("motion_notify_event", self.on_hover)
         self.view_combo.bind("<<ComboboxSelected>>", self.update_graph_view)
+
+    def _update_scroll_region(self, event=None):
+        self.scroll_canvas.configure(scrollregion=self.scroll_canvas.bbox("all"))
+
+    def _resize_scroll_content(self, event):
+        self.scroll_canvas.itemconfigure(self.content_window, width=event.width)
+
+    def _on_mousewheel(self, event):
+        if event.delta:
+            self.scroll_canvas.yview_scroll(int(-event.delta / 120), "units")
+        elif event.num == 4:
+            self.scroll_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.scroll_canvas.yview_scroll(1, "units")
+
+    def _add_hover(self, button, normal_color, active_color):
+        button.bind("<Enter>", lambda event: button.config(bg=active_color))
+        button.bind("<Leave>", lambda event: button.config(bg=normal_color))
+
+    def _animate_hero(self):
+        for particle_data in self.hero_particles:
+            particle, direction = particle_data
+            coords = self.hero_canvas.coords(particle)
+            if not coords:
+                continue
+            next_x = coords[0] + direction * 0.35
+            if next_x > 1160 or next_x < 460:
+                direction *= -1
+                particle_data[1] = direction
+            self.hero_canvas.move(particle, direction * 0.35, 0)
+        self.root.after(45, self._animate_hero)
 
     # --- LOGIC ---
 
@@ -376,15 +466,20 @@ class WeatherApp:
     def plot_graph(self, title):
         self.ax.clear()
         x = np.arange(len(self.graph_temps))
-        self.ax.plot(x, self.graph_temps, color='#007AFF', linewidth=2, marker='o', markersize=5, markerfacecolor='white')
-        self.ax.fill_between(x, self.graph_temps, min(self.graph_temps)-5, color='#007AFF', alpha=0.1)
-        self.ax.set_title(title, fontsize=10, fontweight='bold', color="#333")
+        self.ax.set_facecolor('#101d30')
+        self.fig.patch.set_facecolor('#08111f')
+        self.ax.plot(x, self.graph_temps, color='#54d6ff', linewidth=2.5, marker='o', markersize=5, markerfacecolor='#101d30')
+        self.ax.fill_between(x, self.graph_temps, min(self.graph_temps)-5, color='#54d6ff', alpha=0.12)
+        self.ax.set_title(title, fontsize=10, fontweight='bold', color="#f4f8ff")
         step = 3 if len(x) > 12 else 1
         self.ax.set_xticks(x[::step])
-        self.ax.set_xticklabels(self.graph_times[::step])
-        self.ax.grid(True, linestyle=':', alpha=0.6)
+        self.ax.set_xticklabels(self.graph_times[::step], color='#91a4bc')
+        self.ax.tick_params(axis='y', colors='#91a4bc')
+        self.ax.grid(True, linestyle=':', alpha=0.25, color='#91a4bc')
         self.ax.spines['top'].set_visible(False)
         self.ax.spines['right'].set_visible(False)
+        self.ax.spines['left'].set_color('#29425f')
+        self.ax.spines['bottom'].set_color('#29425f')
         self.canvas.draw()
 
     def on_hover(self, event):
